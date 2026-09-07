@@ -21,6 +21,9 @@ python -m cosmos_policy.experiments.robot.piper.prepare_piper_dataset \
   --source /path/to/piper_sponge_canonical20_20260831 \
   --output /path/to/Piper-Sponge-Cosmos-Policy/preprocessed
 
+python -m cosmos_policy.experiments.robot.piper.compute_piper_statistics \
+  --data-dir /path/to/Piper-Sponge-Cosmos-Policy/preprocessed
+
 export PIPER_DATASET_DIR=/path/to/Piper-Sponge-Cosmos-Policy/preprocessed
 uv run --extra cu128 --group aloha --python 3.10 \
   -m cosmos_policy.datasets.save_aloha_t5_text_embeddings \
