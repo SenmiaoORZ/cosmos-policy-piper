@@ -304,25 +304,32 @@ class ALOHADataset(Dataset):
                             video_paths["cam_right_wrist"], resize_size=self.final_image_size
                         )  # uint8 RGB
                         episode_num_steps = len(images)
-                # Compute language instruction
-                # NOTE: We just hardcode based on the file path for now. Ideally, the demo files would
-                #       contain the task description as a string that we extract.
-                raw_file_string = file.split("/")[-3]
-                if "fold_shirt" in raw_file_string:
-                    raw_file_string = "fold_shirt"
-                elif "candies_in_bowl" in raw_file_string:
-                    raw_file_string = "put_candies_in_bowl"
-                elif "candy_in_bag" in raw_file_string:
-                    raw_file_string = "put_candy_in_bag"
-                elif "flatten_shirt" in raw_file_string:
-                    raw_file_string = "flatten_shirt"
-                elif "brown_chicken_wing_on_plate" in raw_file_string:
-                    raw_file_string = "put_brown_chicken_wing_on_plate"
-                elif "purple_eggplant_on_plate" in raw_file_string:
-                    raw_file_string = "put_purple_eggplant_on_plate"
+                # Prefer an instruction embedded by a custom data adapter.
+                # Keep the released ALOHA path-name convention as a fallback.
+                task_description = f.attrs.get("task_description")
+                if isinstance(task_description, bytes):
+                    task_description = task_description.decode("utf-8")
+                if task_description:
+                    command = str(task_description)
                 else:
-                    raise ValueError(f"Unknown command: {raw_file_string}")
-                command = raw_file_string.replace("_", " ")
+                    raw_file_string = file.split("/")[-3]
+                    if "fold_shirt" in raw_file_string:
+                        raw_file_string = "fold_shirt"
+                    elif "candies_in_bowl" in raw_file_string:
+                        raw_file_string = "put_candies_in_bowl"
+                    elif "candy_in_bag" in raw_file_string:
+                        raw_file_string = "put_candy_in_bag"
+                    elif "flatten_shirt" in raw_file_string:
+                        raw_file_string = "flatten_shirt"
+                    elif "brown_chicken_wing_on_plate" in raw_file_string:
+                        raw_file_string = "put_brown_chicken_wing_on_plate"
+                    elif "purple_eggplant_on_plate" in raw_file_string:
+                        raw_file_string = "put_purple_eggplant_on_plate"
+                    else:
+                        raise ValueError(
+                            f"Unknown command for {file}. Set the HDF5 task_description attribute."
+                        )
+                    command = raw_file_string.replace("_", " ")
                 self.unique_commands.add(command)
                 num_steps = episode_num_steps
                 # Add value function returns if applicable

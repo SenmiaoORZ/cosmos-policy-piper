@@ -43,6 +43,18 @@ ALOHA_CONSTANTS = {
     "PROPRIO_DIM": 14,
 }
 
+# Piper has a single 7-DoF arm.  The initial adapter uses the compatible
+# ALOHA architecture (three image slots and 14-D vectors): its first seven
+# dimensions are Piper joint targets / proprioception and dimensions 7:14 are
+# fixed zeros.  This lets us reuse the released Cosmos Policy model without
+# changing the latent-sequence layout.  Only the first seven predicted values
+# may be sent to the Piper controller.
+PIPER_CONSTANTS = {
+    "NUM_ACTIONS_CHUNK": 16,
+    "ACTION_DIM": 14,
+    "PROPRIO_DIM": 14,
+}
+
 
 # Function to detect robot platform from command line arguments
 def detect_robot_platform():
@@ -52,6 +64,8 @@ def detect_robot_platform():
         return "LIBERO"
     elif "robocasa" in cmd_args:
         return "ROBOCASA"
+    elif "piper" in cmd_args:
+        return "PIPER"
     elif "aloha" in cmd_args:
         return "ALOHA"
     else:
@@ -69,6 +83,8 @@ elif ROBOT_PLATFORM == "ROBOCASA":
     constants = ROBOCASA_CONSTANTS
 elif ROBOT_PLATFORM == "ALOHA":
     constants = ALOHA_CONSTANTS
+elif ROBOT_PLATFORM == "PIPER":
+    constants = PIPER_CONSTANTS
 
 # Assign constants to global variables
 NUM_ACTIONS_CHUNK = constants["NUM_ACTIONS_CHUNK"]

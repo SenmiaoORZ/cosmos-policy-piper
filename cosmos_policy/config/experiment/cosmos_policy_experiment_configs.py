@@ -370,6 +370,71 @@ cosmos_predict2_2b_480p_aloha_185_demos_4_tasks_mixture_foldshirt15_candiesinbow
 )
 
 
+# Piper sponge overfit recipe.  The adapter intentionally retains the released
+# ALOHA latent layout: the left-wrist image is duplicated into its unused
+# right-wrist slot, and seven zero padding values follow Piper's 7-D joint
+# action/proprio vectors.  This is the lowest-risk way to reuse official
+# Cosmos Policy training code before implementing a native two-camera model.
+PIPER_DATASET_DIR = os.environ.get(
+    "PIPER_DATASET_DIR", os.path.join(BASE_DATASETS_DIR, "Piper-Sponge-Cosmos-Policy", "preprocessed")
+)
+piper_sponge_overfit_dataset = L(ALOHADataset)(
+    data_dir=PIPER_DATASET_DIR,
+    t5_text_embeddings_path=os.path.join(PIPER_DATASET_DIR, "t5_embeddings.pkl"),
+    chunk_size=16,
+    use_image_aug=False,
+    use_stronger_image_aug=False,
+    use_proprio=True,
+    normalize_proprio=True,
+    normalize_actions=True,
+    num_duplicates_per_image=4,
+    treat_demos_as_success_rollouts=True,
+    demonstration_sampling_prob=0.5,
+    success_rollout_sampling_prob=0.5,
+    return_value_function_returns=True,
+    gamma=0.99,
+)
+cosmos_predict2_2b_480p_piper_sponge_overfit = LazyDict(
+    dict(
+        defaults=[
+            "/experiment/cosmos_predict2_2b_480p_aloha_185_demos_4_tasks_mixture_foldshirt15_candiesinbowl45_candyinbag45_eggplantchickenonplate80",
+            "_self_",
+        ],
+        trainer=dict(
+            max_iter=5000,
+            logging_iter=5,
+            run_validation=False,
+        ),
+        scheduler=dict(
+            cycle_lengths=[3000, 100000000000000],
+            warm_up_steps=[100, 0],
+            f_start=[1e-4, 0.06],
+            f_max=[1.0, 0.06],
+            f_min=[0.3, 0.06],
+        ),
+        dataloader_train=L(DataLoader)(
+            num_workers=4,
+            persistent_workers=True,
+            pin_memory=True,
+            dataset=piper_sponge_overfit_dataset,
+            sampler=L(DistributedSampler)(
+                dataset=piper_sponge_overfit_dataset,
+                num_replicas=L(parallel_state.get_data_parallel_world_size)(),
+                rank=L(parallel_state.get_data_parallel_rank)(),
+                shuffle=True,
+                seed=0,
+            ),
+            batch_size=4,
+            drop_last=True,
+        ),
+        job=dict(
+            group="cosmos_v2_finetune",
+            name="cosmos_predict2_2b_480p_piper_sponge_overfit",
+        ),
+    )
+)
+
+
 # ALOHA planning model
 # Dataset: 648 rollouts from evaluations with Cosmos Policy, pi05, pi0, OpenVLA-OFT+, Diffusion Policy
 # NOTE: This rollouts dataset is not released; you will need to replace `rollout_data_dir` below with your own rollouts dataset
@@ -477,6 +542,8 @@ def register_configs():
         cosmos_predict2_2b_480p_aloha_185_demos_4_tasks_mixture_foldshirt15_candiesinbowl45_candyinbag45_eggplantchickenonplate80__inference_only,
         cosmos_predict2_2b_480p_aloha_185_demos_4_tasks_mixture_foldshirt15_candiesinbowl45_candyinbag45_eggplantchickenonplate80__resumeFrom50K_648_rollouts_Vsprime_value_func,  # ALOHA planning model
         cosmos_predict2_2b_480p_aloha_185_demos_4_tasks_mixture_foldshirt15_candiesinbowl45_candyinbag45_eggplantchickenonplate80__resumeFrom50K_648_rollouts_Vsprime_value_func__inference_only,
+        # Piper
+        cosmos_predict2_2b_480p_piper_sponge_overfit,
     ]:
         experiment_name = _item["job"]["name"]
         log.info(f"Registering experiment: {experiment_name}")
