@@ -548,6 +548,34 @@ class DistributedCheckpointer(AbstractCheckpointer):
                 raise TypeError(
                     f"Expected a state-dict dictionary in {self.load_path}, got {type(state_dict).__name__}."
                 )
+
+            # Public Cosmos checkpoints contain ordinary CPU tensors.  The
+            # training model has already been wrapped with composable FSDP,
+            # whose state dict expects DTensors even for world size one.
+            # Recreate each checkpoint tensor with the destination DTensor's
+            # mesh and placement so Module.load_state_dict can copy it
+            # strictly.  Keeping the original key set is intentional: the
+            # strict load below is our compatibility check against the base.
+            target_state_dict = model.state_dict()
+            converted_dtensors = 0
+            for key, value in state_dict.items():
+                target_value = target_state_dict.get(key)
+                if isinstance(value, torch.Tensor) and isinstance(target_value, DTensor):
+                    state_dict[key] = DTensor.from_local(
+                        value.to(device=target_value.device, dtype=target_value.dtype),
+                        device_mesh=target_value.device_mesh,
+                        placements=target_value.placements,
+                        run_check=False,
+                        shape=target_value.shape,
+                        stride=target_value.stride(),
+                    )
+                    converted_dtensors += 1
+            if converted_dtensors == 0:
+                raise RuntimeError(
+                    "The public checkpoint did not match any DTensor entries in the FSDP model state dict; "
+                    "refusing to fall back to a non-pretrained initialization."
+                )
+            log.critical(f"Converted {converted_dtensors} public checkpoint tensors to FSDP DTensors")
             incompatible_keys = model.load_state_dict(state_dict, strict=True)
             if incompatible_keys.missing_keys or incompatible_keys.unexpected_keys:
                 raise RuntimeError(
