@@ -47,3 +47,20 @@ uv run --extra cu128 --group aloha --python 3.10 \
 For the overfit run, remove the final two overrides and select the actual GPU
 count. The upstream implementation provides the training loop; this fork only
 adds Piper conversion, task-string loading, and the overfit config.
+
+## Validate a released checkpoint
+
+The model release uses the native Cosmos distributed-checkpoint (DCP) layout:
+the Hugging Face repository contains a `model/` directory with `.metadata` and
+one or more `*.distcp` files. After downloading that directory, validate that
+it loads as an inference model before connecting it to a robot:
+
+```bash
+python -m cosmos_policy.experiments.robot.piper.validate_checkpoint \
+  --checkpoint /path/to/downloaded/model
+```
+
+This checks DCP loading only. It does not command hardware. A Piper controller
+must normalize the 7-D observed joint position with the release statistics,
+unnormalize the first 7 predicted action dimensions, enforce the robot's own
+joint limits and emergency-stop policy, and ignore padded dimensions `7:14`.
