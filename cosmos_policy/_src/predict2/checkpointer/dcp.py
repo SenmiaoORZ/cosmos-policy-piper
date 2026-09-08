@@ -557,6 +557,18 @@ class DistributedCheckpointer(AbstractCheckpointer):
             # strictly.  Keeping the original key set is intentional: the
             # strict load below is our compatibility check against the base.
             target_state_dict = model.state_dict()
+            unsupported_extra_state_keys = [
+                key
+                for key in state_dict
+                if key.endswith("._extra_state") and key not in target_state_dict
+            ]
+            for key in unsupported_extra_state_keys:
+                state_dict.pop(key)
+            if unsupported_extra_state_keys:
+                log.warning(
+                    f"Discarding {len(unsupported_extra_state_keys)} Transformer-Engine runtime "
+                    "_extra_state entries absent from the current model"
+                )
             converted_dtensors = 0
             for key, value in state_dict.items():
                 target_value = target_state_dict.get(key)
