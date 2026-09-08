@@ -221,6 +221,21 @@ def load_model_state_dict_from_checkpoint(
     if SMOKE:
         return model
 
+    # ``snapshot_download`` returns a local DCP directory for a Hugging Face
+    # model repository.  It is not a torch-serialised file, so it must be read
+    # through DCP even though the path is local.  The previous local-only path
+    # incorrectly passed that directory to ``easy_io.load``.
+    if checkpoint_format == "dcp":
+        log.info(f"Loading local DCP model checkpoint from {local_s3_ckpt_fp}")
+        checkpointer = DistributedCheckpointer(config.checkpoint, config.job, callbacks=None, disable_async=True)
+        model_wrapper = ModelWrapper(model, load_ema_to_reg=load_ema_to_reg)
+        model_state_dict = model_wrapper.state_dict()
+        storage_reader = checkpointer.get_storage_reader(local_s3_ckpt_fp)
+        load_planner = DefaultLoadPlanner(allow_partial_load=True)
+        dcp_load_state_dict(model_state_dict, storage_reader, load_planner)
+        model_wrapper.load_state_dict(model_state_dict)
+        return model
+
     if load_from_local:
         # Load on rank0 only and broadcast
         if distributed.is_rank0():
