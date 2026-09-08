@@ -535,6 +535,32 @@ class DistributedCheckpointer(AbstractCheckpointer):
         if self.callbacks is not None:
             self.callbacks.on_load_checkpoint_start(model)
 
+        # Cosmos public base checkpoints are distributed as single ``.pt``
+        # state dictionaries, while this checkpointer normally consumes a DCP
+        # directory.  Treating a ``.pt`` path as ``None`` silently starts a
+        # finetuning job from random initialization.  Load this documented
+        # model-only format explicitly before the DCP resume logic.
+        latest_checkpoint_file = self._read_latest_checkpoint_file()
+        if latest_checkpoint_file is None and self.load_path and str(self.load_path).endswith(".pt"):
+            log.critical(f"Loading model-only PyTorch checkpoint from {self.load_path}")
+            state_dict = torch.load(self.load_path, map_location="cpu", weights_only=False)
+            if not isinstance(state_dict, dict):
+                raise TypeError(
+                    f"Expected a state-dict dictionary in {self.load_path}, got {type(state_dict).__name__}."
+                )
+            incompatible_keys = model.load_state_dict(state_dict, strict=True)
+            if incompatible_keys.missing_keys or incompatible_keys.unexpected_keys:
+                raise RuntimeError(
+                    "Strict load of the base checkpoint reported key differences: "
+                    f"missing={incompatible_keys.missing_keys}, "
+                    f"unexpected={incompatible_keys.unexpected_keys}."
+                )
+            log.critical(f"Loaded model-only PyTorch checkpoint from {self.load_path}")
+            torch.cuda.empty_cache()
+            if self.callbacks is not None:
+                self.callbacks.on_load_checkpoint_end(model, iteration=0, checkpoint_path=self.load_path)
+            return 0
+
         resume_keys, checkpoint_path = self.keys_to_resume_during_load()
         resume_keys = sorted(resume_keys)
         log.critical(f"Resuming ckpt {checkpoint_path} with keys: {resume_keys}")
