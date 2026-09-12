@@ -101,6 +101,24 @@ If you run into runtime errors, you may need to enter the Python shell via `uv r
 
 See [SETUP.md](SETUP.md) for instructions on setting up the environment.
 
+## HMDO / Piper checkpoint (iteration 50,000)
+
+The iteration-50,000 model checkpoint is hosted in the private Hugging Face
+repository [`SourORZ/cosmos-policy-piper-50k`](https://huggingface.co/SourORZ/cosmos-policy-piper-50k).
+Request access from the repository owner, then download it with:
+
+```bash
+huggingface-cli download SourORZ/cosmos-policy-piper-50k \
+  --repo-type model \
+  --local-dir /path/to/checkpoints
+```
+
+This checkpoint uses the PyTorch Distributed Checkpoint format. Preserve the
+directory layout `checkpoint/model/.metadata` and
+`checkpoint/model/__0_0.distcp` when copying or passing its path to the
+training or inference code. It is an inference model checkpoint; the bundled
+optimizer shard is incomplete and is not suitable for resuming training.
+
 ## Training and Evaluation
 
 See [LIBERO.md](LIBERO.md) for fine-tuning/evaluating on LIBERO simulation benchmark task suites.
