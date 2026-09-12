@@ -1,110 +1,77 @@
-# Cosmos Policy: Fine-Tuning Video Models for Visuomotor Control and Planning
+# Piper Sponge Cosmos Policy
 
-<p align="center">
-  <a href="https://arxiv.org/abs/2601.16163">Paper</a>&nbsp | <a href="https://research.nvidia.com/labs/dir/cosmos-policy/">Project Website</a>&nbsp | 🤗 <a href="https://huggingface.co/collections/nvidia/cosmos-policy">Models & Training Data</a>&nbsp | <a href="https://youtu.be/V2qdFD9n5BM">Summary Video</a>
-</p>
+This repository contains the project code and reproduction workflow for
+fine-tuning **Cosmos Policy** on a Piper sponge-manipulation task. It is a
+focused adaptation of the upstream Cosmos Policy training stack: the project
+adds the Piper data conversion, task-string handling, dataset statistics, and
+an overfit-oriented training configuration while retaining the upstream model
+and distributed training implementation.
 
-## System Requirements
+> This project is an experimental research baseline. Do not connect a model to
+> physical hardware until the action convention, units, joint limits, and
+> emergency-stop procedure have been independently validated.
 
-Inference with base Cosmos Policy only (i.e., no model-based planning):
-* 1 GPU with 6.8 GB VRAM for LIBERO sim benchmark tasks
-* 1 GPU with 8.9 GB VRAM for RoboCasa sim benchmark tasks
-* 1 GPU with 6.0 GB VRAM for ALOHA robot tasks
+## What is in this repository
 
-Inference with Cosmos Policy + model-based planning (best-of-N search) on ALOHA robot tasks:
-* Minimum (serial inference): 1 GPU with 10.0 GB VRAM
-* Recommended (parallel inference): N GPUs with 10.0 GB VRAM each
+- Piper sponge dataset conversion and normalization utilities.
+- A Cosmos Predict2 2B, 480p configuration for the Piper sponge overfit run.
+- Training, checkpoint validation, and open-loop evaluation utilities.
+- A released iteration-50,000 inference checkpoint on Hugging Face.
 
-Training:
-* Generally, it is recommended to have at least 1 node of 8 80GB GPUs. For the experiments in the Cosmos Policy paper, we used 8 80GB GPUs (H100s) for 48 hours for small-scale ALOHA robot data fine-tuning (<200 demos), 32 80GB GPUs (H100s) for 48 hours for RoboCasa training (1200 demos), and 64 80GB GPUs (H100s) for 48 hours for LIBERO training (2000 demos). If you have fewer GPUs, you can use gradient accumulation to increase total batch size, which we found leads to faster convergence than taking more gradient steps with a smaller batch size.
+## Task representation
 
-## Quick Start
+| Signal | Representation |
+| --- | --- |
+| Observations | Head RGB, left-wrist RGB, and 7-D Piper joint position |
+| Action | Next synchronized 7-D joint-position target |
+| Model compatibility format | 14-D `[piper_7, zeros_7]`; the left-wrist image is duplicated into the required `cam_right_wrist` input |
+| Hardware execution | Only use predicted dimensions `0:7`; ignore dimensions `7:14` |
 
-First, set up a Docker container following the instructions in [SETUP.md](SETUP.md).
+## Setup
 
-Then, inside the Docker container, enter a Python shell via: `uv run --extra cu128 --group libero --python 3.10 python`.
+Follow the CUDA/container environment instructions in [SETUP.md](SETUP.md).
+The examples below assume the provided `uv` environment and CUDA 12.8 extra.
 
-Then, run the Python code below to generate (1) robot actions, (2) predicted future state (represented by robot proprioception and future image observations), and (3) future state value (expected cumulative rewards):
+## Prepare the Piper sponge dataset
 
-```python
-import pickle
-import torch
-from PIL import Image
-from cosmos_policy.experiments.robot.libero.run_libero_eval import PolicyEvalConfig
-from cosmos_policy.experiments.robot.cosmos_utils import (
-    get_action,
-    get_model,
-    load_dataset_stats,
-    init_t5_text_embeddings_cache,
-    get_t5_embedding_from_cache,
-)
+The canonical Piper sponge source dataset is not bundled in this repository.
+After obtaining it, preprocess it and generate the statistics and text
+embedding cache:
 
-# Instantiate config (see PolicyEvalConfig in cosmos_policy/experiments/robot/libero/run_libero_eval.py for definitions)
-cfg = PolicyEvalConfig(
-    config="cosmos_predict2_2b_480p_libero__inference_only",
-    ckpt_path="nvidia/Cosmos-Policy-LIBERO-Predict2-2B",
-    config_file="cosmos_policy/config/config.py",
-    dataset_stats_path="nvidia/Cosmos-Policy-LIBERO-Predict2-2B/libero_dataset_statistics.json",
-    t5_text_embeddings_path="nvidia/Cosmos-Policy-LIBERO-Predict2-2B/libero_t5_embeddings.pkl",
-    use_wrist_image=True,
-    use_proprio=True,
-    normalize_proprio=True,
-    unnormalize_actions=True,
-    chunk_size=16,
-    num_open_loop_steps=16,
-    trained_with_image_aug=True,
-    use_jpeg_compression=True,
-    flip_images=True,  # Only for LIBERO; images render upside-down
-    num_denoising_steps_action=5,
-    num_denoising_steps_future_state=1,
-    num_denoising_steps_value=1,
-)
-# Load dataset stats for action/proprio scaling
-dataset_stats = load_dataset_stats(cfg.dataset_stats_path)
-# Initialize T5 text embeddings cache
-init_t5_text_embeddings_cache(cfg.t5_text_embeddings_path)
-# Load model
-model, cosmos_config = get_model(cfg)
-# Load sample observation:
-#   observation (dict): {
-#     "primary_image": primary third-person image,
-#     "wrist_image": wrist-mounted camera image,
-#     "proprio": robot proprioceptive state,
-#   }
-with open("cosmos_policy/experiments/robot/libero/sample_libero_10_observation.pkl", "rb") as file:
-    observation = pickle.load(file)
-    task_description = "put both the alphabet soup and the tomato sauce in the basket"
-# Generate robot actions, future state (proprio + images), and value
-action_return_dict = get_action(
-    cfg,
-    model,
-    dataset_stats,
-    observation,
-    task_description,
-    num_denoising_steps_action=cfg.num_denoising_steps_action,
-    generate_future_state_and_value_in_parallel=True,
-)
-# Print actions
-print(f"Generated action chunk: {action_return_dict['actions']}")
-# Save future image predictions (third-person image and wrist image)
-img_path1, img_path2 = "future_image.png", "future_wrist_image.png"
-Image.fromarray(action_return_dict['future_image_predictions']['future_image']).save(img_path1)
-Image.fromarray(action_return_dict['future_image_predictions']['future_wrist_image']).save(img_path2)
-print(f"Saved future image predictions to:\n\t{img_path1}\n\t{img_path2}")
-# Print value
-print(f"Generated value: {action_return_dict['value_prediction']}")
+```bash
+python -m cosmos_policy.experiments.robot.piper.prepare_piper_dataset \
+  --source /path/to/piper_sponge_canonical20_20260831 \
+  --output /path/to/Piper-Sponge-Cosmos-Policy/preprocessed
+
+python -m cosmos_policy.experiments.robot.piper.compute_piper_statistics \
+  --data-dir /path/to/Piper-Sponge-Cosmos-Policy/preprocessed
+
+export PIPER_DATASET_DIR=/path/to/Piper-Sponge-Cosmos-Policy/preprocessed
+uv run --extra cu128 --group aloha --python 3.10 \
+  -m cosmos_policy.datasets.save_aloha_t5_text_embeddings \
+  --data_dir "$PIPER_DATASET_DIR"
 ```
 
-If you run into runtime errors, you may need to enter the Python shell via `uv run   --extra cu128   --group libero   --python 3.10   python` before running the code above.
+## Train
 
-## Installation
+Run a single-GPU smoke test first:
 
-See [SETUP.md](SETUP.md) for instructions on setting up the environment.
+```bash
+export PIPER_DATASET_DIR=/path/to/Piper-Sponge-Cosmos-Policy/preprocessed
+uv run --extra cu128 --group aloha --python 3.10 \
+  torchrun --nproc_per_node=1 -m cosmos_policy.scripts.train \
+  --config=cosmos_policy/config/config.py -- \
+  experiment=cosmos_predict2_2b_480p_piper_sponge_overfit \
+  trainer.max_iter=10 dataloader_train.num_workers=0
+```
 
-## HMDO / Piper checkpoint (iteration 50,000)
+For the full overfit run, remove the final two overrides and set
+`--nproc_per_node` to the available GPU count.
 
-The iteration-50,000 model checkpoint is hosted in the private Hugging Face
-repository [`SourORZ/cosmos-policy-piper-50k`](https://huggingface.co/SourORZ/cosmos-policy-piper-50k).
+## Released checkpoint
+
+The iteration-50,000 inference checkpoint is hosted in the private Hugging
+Face repository [SourORZ/cosmos-policy-piper-50k](https://huggingface.co/SourORZ/cosmos-policy-piper-50k).
 Request access from the repository owner, then download it with:
 
 ```bash
@@ -113,33 +80,28 @@ huggingface-cli download SourORZ/cosmos-policy-piper-50k \
   --local-dir /path/to/checkpoints
 ```
 
-This checkpoint uses the PyTorch Distributed Checkpoint format. Preserve the
-directory layout `checkpoint/model/.metadata` and
-`checkpoint/model/__0_0.distcp` when copying or passing its path to the
-training or inference code. It is an inference model checkpoint; the bundled
-optimizer shard is incomplete and is not suitable for resuming training.
+The checkpoint uses the PyTorch Distributed Checkpoint (DCP) format. Preserve
+both `checkpoint/model/.metadata` and `checkpoint/model/__0_0.distcp` exactly
+as downloaded. Validate the checkpoint before using it:
 
-## Training and Evaluation
-
-See [LIBERO.md](LIBERO.md) for fine-tuning/evaluating on LIBERO simulation benchmark task suites.
-
-See [ROBOCASA.md](ROBOCASA.md) for fine-tuning/evaluating on RoboCasa simulation benchmark tasks.
-
-See [ALOHA.md](ALOHA.md) for fine-tuning/evaluating on real-world ALOHA robot tasks.
-
-## Support
-
-If you run into any issues, please open a new GitHub issue. For critical blocking issues, please email Moo Jin Kim (moojink@cs.stanford.edu) to bring the issue to his attention.
-
-## Citation
-
-If you use our code in your work, please cite [our paper](https://arxiv.org/abs/2601.16163):
-
-```bibtex
-@article{kim2026cosmos,
-  title={Cosmos Policy: Fine-Tuning Video Models for Visuomotor Control and Planning},
-  author={Kim, Moo Jin and Gao, Yihuai and Lin, Tsung-Yi and Lin, Yen-Chen and Ge, Yunhao and Lam, Grace and Liang, Percy and Song, Shuran and Liu, Ming-Yu and Finn, Chelsea and Gu, Jinwei},
-  journal={arXiv preprint arXiv:2601.16163},
-  year={2026}
-}
+```bash
+python -m cosmos_policy.experiments.robot.piper.validate_checkpoint \
+  --checkpoint /path/to/checkpoints/checkpoint/model
 ```
+
+The release is intended for inference. Its optimizer shard is incomplete, so
+it must not be used as a training-resume checkpoint.
+
+## Deployment notes
+
+The model output is padded to a 14-D compatibility representation. A Piper
+controller must normalize the 7-D observed joint position with the released
+dataset statistics, unnormalize only the first 7 action dimensions, enforce
+robot-specific limits, and reject dimensions `7:14`. The checkpoint validation
+tool verifies DCP loading only; it does not command a robot.
+
+## Upstream project
+
+This work is built on [Cosmos Policy](https://github.com/nvidia-cosmos/cosmos-policy).
+Please follow the upstream license and cite the original Cosmos Policy paper
+when using the underlying model and training stack.
